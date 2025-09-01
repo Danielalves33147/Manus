@@ -28,7 +28,7 @@ server:
     context-path: /api
 
 jwt:
-  secret: mySecretKey
+  secret: myVerySecretKeyForJWTTokenGenerationThatShouldBeLongEnoughForSecurity123456789
   expiration: 86400000 # 24 hours
 
 springdoc:
