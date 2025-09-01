@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import React, { useState, useEffect } from 'react'
 import { Button } from '@/components/ui/button.jsx'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card.jsx'
 import { Input } from '@/components/ui/input.jsx'
@@ -7,13 +7,15 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs.j
 import { Badge } from '@/components/ui/badge.jsx'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select.jsx'
 import { Textarea } from '@/components/ui/textarea.jsx'
-import { Heart, Package, Users, ShoppingCart, UserPlus, Trash2, Edit } from 'lucide-react'
+import { Heart, Package, Users, ShoppingCart, UserPlus, Trash2, Edit, AlertCircle } from 'lucide-react'
 import './App.css'
 
 function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(false)
   const [userRole, setUserRole] = useState('')
   const [loginData, setLoginData] = useState({ username: '', password: '' })
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
   
   // Estados para cestas básicas
   const [cestas, setCestas] = useState([])
@@ -36,7 +38,6 @@ function App() {
   const [novaDoacao, setNovaDoacao] = useState({
     tipoAlimento: '',
     quantidade: '',
-    unidadeMedida: 'kg',
     dataRecebimento: '',
     dataValidade: '',
     origem: '',
@@ -52,18 +53,91 @@ function App() {
     role: 'USER'
   })
 
+  // Estados para estatísticas
+  const [stats, setStats] = useState({
+    totalCestas: 0,
+    totalBeneficiados: 0,
+    totalDoacoes: 0,
+    totalUsuarios: 0
+  })
+
   const API_BASE = 'http://localhost:8080/api'
 
+  // Função para obter headers com autenticação
   const getAuthHeaders = () => {
     const token = localStorage.getItem('token')
+    if (!token) {
+      console.warn('Token não encontrado')
+      return {
+        'Content-Type': 'application/json'
+      }
+    }
     return {
       'Content-Type': 'application/json',
       'Authorization': `Bearer ${token}`
     }
   }
 
+  // Função para fazer requisições autenticadas
+  const fetchWithAuth = async (url, options = {}) => {
+    const headers = getAuthHeaders()
+    const config = {
+      ...options,
+      headers: {
+        ...headers,
+        ...options.headers
+      }
+    }
+    
+    try {
+      const response = await fetch(url, config)
+      
+      if (response.status === 401) {
+        // Token inválido ou expirado
+        handleLogout()
+        throw new Error('Sessão expirada. Faça login novamente.')
+      }
+      
+      return response
+    } catch (error) {
+      console.error('Erro na requisição:', error)
+      throw error
+    }
+  }
+
+  // Verificar se há token salvo ao carregar a página
+  useEffect(() => {
+    const token = localStorage.getItem('token')
+    const role = localStorage.getItem('userRole')
+    if (token && role) {
+      setIsLoggedIn(true)
+      setUserRole(role)
+      carregarDadosIniciais(role)
+    }
+  }, [])
+
+  const carregarDadosIniciais = async (role) => {
+    try {
+      await Promise.all([
+        carregarCestas(),
+        carregarBeneficiados(),
+        carregarDoacoes(),
+        carregarEstatisticas()
+      ])
+      
+      if (role === 'ADMIN') {
+        await carregarUsuarios()
+      }
+    } catch (error) {
+      console.error('Erro ao carregar dados iniciais:', error)
+    }
+  }
+
   const handleLogin = async (e) => {
     e.preventDefault()
+    setLoading(true)
+    setError('')
+    
     try {
       const response = await fetch(`${API_BASE}/auth/login`, {
         method: 'POST',
@@ -76,32 +150,47 @@ function App() {
       if (response.ok) {
         const data = await response.json()
         localStorage.setItem('token', data.token)
+        localStorage.setItem('userRole', data.role)
         setUserRole(data.role)
         setIsLoggedIn(true)
+        
         // Carregar dados iniciais
-        carregarCestas()
-        carregarBeneficiados()
-        carregarDoacoes()
-        if (data.role === 'ADMIN') {
-          carregarUsuarios()
-        }
+        await carregarDadosIniciais(data.role)
       } else {
-        alert('Erro no login. Verifique suas credenciais.')
+        const errorData = await response.text()
+        setError('Erro no login: ' + errorData)
       }
     } catch (error) {
       console.error('Erro no login:', error)
-      alert('Erro de conexão com o servidor.')
+      setError('Erro de conexão com o servidor.')
+    } finally {
+      setLoading(false)
     }
+  }
+
+  const handleLogout = () => {
+    localStorage.removeItem('token')
+    localStorage.removeItem('userRole')
+    setIsLoggedIn(false)
+    setUserRole('')
+    setCestas([])
+    setBeneficiados([])
+    setDoacoes([])
+    setUsuarios([])
+    setStats({ totalCestas: 0, totalBeneficiados: 0, totalDoacoes: 0, totalUsuarios: 0 })
   }
 
   // Funções para cestas básicas
   const criarCesta = async () => {
-    if (!novaCesta.trim()) return
+    if (!novaCesta.trim()) {
+      setError('Nome da cesta é obrigatório')
+      return
+    }
     
+    setLoading(true)
     try {
-      const response = await fetch(`${API_BASE}/cestas-basicas`, {
+      const response = await fetchWithAuth(`${API_BASE}/cestas-basicas`, {
         method: 'POST',
-        headers: getAuthHeaders(),
         body: JSON.stringify({ nomeCesta: novaCesta }),
       })
       
@@ -109,24 +198,26 @@ function App() {
         const cesta = await response.json()
         setCestas([...cestas, cesta])
         setNovaCesta('')
+        setError('')
+        await carregarEstatisticas()
       } else {
-        alert('Erro ao criar cesta básica.')
+        const errorText = await response.text()
+        setError('Erro ao criar cesta: ' + errorText)
       }
     } catch (error) {
-      console.error('Erro ao criar cesta:', error)
-      alert('Erro de conexão com o servidor.')
+      setError('Erro ao criar cesta: ' + error.message)
+    } finally {
+      setLoading(false)
     }
   }
 
   const carregarCestas = async () => {
     try {
-      const response = await fetch(`${API_BASE}/cestas-basicas`, {
-        headers: getAuthHeaders(),
-      })
+      const response = await fetchWithAuth(`${API_BASE}/cestas-basicas`)
       
       if (response.ok) {
         const data = await response.json()
-        setCestas(data)
+        setCestas(Array.isArray(data) ? data : [])
       }
     } catch (error) {
       console.error('Erro ao carregar cestas:', error)
@@ -136,14 +227,14 @@ function App() {
   // Funções para beneficiados
   const criarBeneficiado = async () => {
     if (!novoBeneficiado.nome || !novoBeneficiado.cpf) {
-      alert('Nome e CPF são obrigatórios')
+      setError('Nome e CPF são obrigatórios')
       return
     }
     
+    setLoading(true)
     try {
-      const response = await fetch(`${API_BASE}/beneficiados`, {
+      const response = await fetchWithAuth(`${API_BASE}/beneficiados`, {
         method: 'POST',
-        headers: getAuthHeaders(),
         body: JSON.stringify(novoBeneficiado),
       })
       
@@ -159,25 +250,26 @@ function App() {
           rendaFamiliar: '',
           numeroDependentes: ''
         })
+        setError('')
+        await carregarEstatisticas()
       } else {
-        const error = await response.text()
-        alert('Erro ao criar beneficiado: ' + error)
+        const errorText = await response.text()
+        setError('Erro ao cadastrar beneficiado: ' + errorText)
       }
     } catch (error) {
-      console.error('Erro ao criar beneficiado:', error)
-      alert('Erro de conexão com o servidor.')
+      setError('Erro ao cadastrar beneficiado: ' + error.message)
+    } finally {
+      setLoading(false)
     }
   }
 
   const carregarBeneficiados = async () => {
     try {
-      const response = await fetch(`${API_BASE}/beneficiados`, {
-        headers: getAuthHeaders(),
-      })
+      const response = await fetchWithAuth(`${API_BASE}/beneficiados`)
       
       if (response.ok) {
         const data = await response.json()
-        setBeneficiados(data)
+        setBeneficiados(Array.isArray(data) ? data : [])
       }
     } catch (error) {
       console.error('Erro ao carregar beneficiados:', error)
@@ -187,15 +279,18 @@ function App() {
   // Funções para doações
   const criarDoacao = async () => {
     if (!novaDoacao.tipoAlimento || !novaDoacao.quantidade) {
-      alert('Tipo de alimento e quantidade são obrigatórios')
+      setError('Tipo de alimento e quantidade são obrigatórios')
       return
     }
     
+    setLoading(true)
     try {
-      const response = await fetch(`${API_BASE}/doacoes`, {
+      const response = await fetchWithAuth(`${API_BASE}/doacoes`, {
         method: 'POST',
-        headers: getAuthHeaders(),
-        body: JSON.stringify(novaDoacao),
+        body: JSON.stringify({
+          ...novaDoacao,
+          unidadeMedida: 'kg'
+        }),
       })
       
       if (response.ok) {
@@ -204,31 +299,31 @@ function App() {
         setNovaDoacao({
           tipoAlimento: '',
           quantidade: '',
-          unidadeMedida: 'kg',
           dataRecebimento: '',
           dataValidade: '',
           origem: '',
           observacoes: ''
         })
+        setError('')
+        await carregarEstatisticas()
       } else {
-        const error = await response.text()
-        alert('Erro ao criar doação: ' + error)
+        const errorText = await response.text()
+        setError('Erro ao registrar doação: ' + errorText)
       }
     } catch (error) {
-      console.error('Erro ao criar doação:', error)
-      alert('Erro de conexão com o servidor.')
+      setError('Erro ao registrar doação: ' + error.message)
+    } finally {
+      setLoading(false)
     }
   }
 
   const carregarDoacoes = async () => {
     try {
-      const response = await fetch(`${API_BASE}/doacoes`, {
-        headers: getAuthHeaders(),
-      })
+      const response = await fetchWithAuth(`${API_BASE}/doacoes`)
       
       if (response.ok) {
         const data = await response.json()
-        setDoacoes(data)
+        setDoacoes(Array.isArray(data) ? data : [])
       }
     } catch (error) {
       console.error('Erro ao carregar doações:', error)
@@ -238,14 +333,14 @@ function App() {
   // Funções para usuários (admin)
   const criarUsuario = async () => {
     if (!novoUsuario.username || !novoUsuario.password) {
-      alert('Username e senha são obrigatórios')
+      setError('Username e senha são obrigatórios')
       return
     }
     
+    setLoading(true)
     try {
-      const response = await fetch(`${API_BASE}/users`, {
+      const response = await fetchWithAuth(`${API_BASE}/users`, {
         method: 'POST',
-        headers: getAuthHeaders(),
         body: JSON.stringify(novoUsuario),
       })
       
@@ -258,51 +353,86 @@ function App() {
           email: '',
           role: 'USER'
         })
-        alert('Usuário criado com sucesso!')
+        setError('')
+        await carregarEstatisticas()
       } else {
-        const error = await response.text()
-        alert('Erro ao criar usuário: ' + error)
+        const errorText = await response.text()
+        setError('Erro ao criar usuário: ' + errorText)
       }
     } catch (error) {
-      console.error('Erro ao criar usuário:', error)
-      alert('Erro de conexão com o servidor.')
+      setError('Erro ao criar usuário: ' + error.message)
+    } finally {
+      setLoading(false)
     }
   }
 
   const carregarUsuarios = async () => {
     try {
-      const response = await fetch(`${API_BASE}/users`, {
-        headers: getAuthHeaders(),
-      })
+      const response = await fetchWithAuth(`${API_BASE}/users`)
       
       if (response.ok) {
         const data = await response.json()
-        setUsuarios(data)
+        setUsuarios(Array.isArray(data) ? data : [])
       }
     } catch (error) {
       console.error('Erro ao carregar usuários:', error)
     }
   }
 
-  const deletarUsuario = async (userId) => {
-    if (!confirm('Tem certeza que deseja deletar este usuário?')) return
-    
+  // Função para carregar estatísticas
+  const carregarEstatisticas = async () => {
     try {
-      const response = await fetch(`${API_BASE}/users/${userId}`, {
-        method: 'DELETE',
-        headers: getAuthHeaders(),
+      setStats({
+        totalCestas: cestas.length,
+        totalBeneficiados: beneficiados.length,
+        totalDoacoes: doacoes.length,
+        totalUsuarios: usuarios.length
       })
-      
-      if (response.ok) {
-        setUsuarios(usuarios.filter(u => u.id !== userId))
-        alert('Usuário deletado com sucesso!')
-      } else {
-        const error = await response.text()
-        alert('Erro ao deletar usuário: ' + error)
-      }
     } catch (error) {
-      console.error('Erro ao deletar usuário:', error)
-      alert('Erro de conexão com o servidor.')
+      console.error('Erro ao carregar estatísticas:', error)
+    }
+  }
+
+  // Função para exportar relatórios
+  const exportarRelatorio = async (tipo) => {
+    setLoading(true)
+    try {
+      let dados = []
+      let nomeArquivo = ''
+      
+      switch (tipo) {
+        case 'beneficiados':
+          dados = beneficiados
+          nomeArquivo = 'relatorio_beneficiados.json'
+          break
+        case 'doacoes':
+          dados = doacoes
+          nomeArquivo = 'relatorio_doacoes.json'
+          break
+        case 'distribuicoes':
+          dados = cestas
+          nomeArquivo = 'relatorio_distribuicoes.json'
+          break
+        default:
+          setError('Tipo de relatório inválido')
+          return
+      }
+      
+      const blob = new Blob([JSON.stringify(dados, null, 2)], { type: 'application/json' })
+      const url = window.URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = nomeArquivo
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      window.URL.revokeObjectURL(url)
+      
+      setError('')
+    } catch (error) {
+      setError('Erro ao exportar relatório: ' + error.message)
+    } finally {
+      setLoading(false)
     }
   }
 
@@ -314,10 +444,8 @@ function App() {
             <div className="mx-auto mb-4 w-12 h-12 bg-red-100 rounded-full flex items-center justify-center">
               <Heart className="w-6 h-6 text-red-600" />
             </div>
-            <CardTitle className="text-2xl">Sistema de Doações</CardTitle>
-            <CardDescription>
-              Faça login para gerenciar cestas básicas
-            </CardDescription>
+            <CardTitle className="text-2xl font-bold text-gray-900">Sistema de Doações</CardTitle>
+            <CardDescription>Faça login para gerenciar cestas básicas</CardDescription>
           </CardHeader>
           <CardContent>
             <form onSubmit={handleLogin} className="space-y-4">
@@ -343,16 +471,23 @@ function App() {
                   required
                 />
               </div>
-              <Button type="submit" className="w-full">
-                Entrar
+              
+              {error && (
+                <div className="flex items-center space-x-2 text-red-600 text-sm">
+                  <AlertCircle className="w-4 h-4" />
+                  <span>{error}</span>
+                </div>
+              )}
+              
+              <Button type="submit" className="w-full" disabled={loading}>
+                {loading ? 'Entrando...' : 'Entrar'}
               </Button>
             </form>
-            <div className="mt-4 p-3 bg-blue-50 rounded-lg">
-              <p className="text-sm text-blue-700">
-                <strong>Credenciais de teste:</strong><br />
-                Usuário: admin<br />
-                Senha: admin123
-              </p>
+            
+            <div className="mt-6 p-4 bg-blue-50 rounded-lg">
+              <p className="text-sm text-blue-800 font-medium">Credenciais de teste:</p>
+              <p className="text-sm text-blue-600">Usuário: admin</p>
+              <p className="text-sm text-blue-600">Senha: admin123</p>
             </div>
           </CardContent>
         </Card>
@@ -365,19 +500,12 @@ function App() {
       <header className="bg-white shadow-sm border-b">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center h-16">
-            <div className="flex items-center">
-              <Heart className="w-8 h-8 text-red-600 mr-3" />
-              <h1 className="text-xl font-semibold text-gray-900">Sistema de Doações</h1>
-              <Badge variant="outline" className="ml-3">{userRole}</Badge>
+            <div className="flex items-center space-x-3">
+              <Heart className="w-8 h-8 text-red-600" />
+              <h1 className="text-xl font-bold text-gray-900">Sistema de Doações</h1>
+              <Badge variant="secondary">{userRole}</Badge>
             </div>
-            <Button 
-              variant="outline" 
-              onClick={() => {
-                localStorage.removeItem('token')
-                setIsLoggedIn(false)
-                setUserRole('')
-              }}
-            >
+            <Button variant="outline" onClick={handleLogout}>
               Sair
             </Button>
           </div>
@@ -385,107 +513,95 @@ function App() {
       </header>
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {error && (
+          <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg flex items-center space-x-2">
+            <AlertCircle className="w-5 h-5 text-red-600" />
+            <span className="text-red-800">{error}</span>
+            <Button variant="ghost" size="sm" onClick={() => setError('')}>×</Button>
+          </div>
+        )}
+
         <Tabs defaultValue="cestas" className="space-y-6">
-          <TabsList className={`grid w-full ${userRole === 'ADMIN' ? 'grid-cols-5' : 'grid-cols-4'}`}>
-            <TabsTrigger value="cestas" className="flex items-center gap-2">
+          <TabsList className="grid w-full grid-cols-5 lg:grid-cols-6">
+            <TabsTrigger value="cestas" className="flex items-center space-x-2">
               <Package className="w-4 h-4" />
-              Cestas Básicas
+              <span>Cestas Básicas</span>
             </TabsTrigger>
-            <TabsTrigger value="beneficiados" className="flex items-center gap-2">
+            <TabsTrigger value="beneficiados" className="flex items-center space-x-2">
               <Users className="w-4 h-4" />
-              Beneficiados
+              <span>Beneficiados</span>
             </TabsTrigger>
-            <TabsTrigger value="doacoes" className="flex items-center gap-2">
+            <TabsTrigger value="doacoes" className="flex items-center space-x-2">
               <ShoppingCart className="w-4 h-4" />
-              Doações
+              <span>Doações</span>
             </TabsTrigger>
-            <TabsTrigger value="relatorios" className="flex items-center gap-2">
+            <TabsTrigger value="relatorios" className="flex items-center space-x-2">
               <Heart className="w-4 h-4" />
-              Relatórios
+              <span>Relatórios</span>
             </TabsTrigger>
             {userRole === 'ADMIN' && (
-              <TabsTrigger value="usuarios" className="flex items-center gap-2">
+              <TabsTrigger value="usuarios" className="flex items-center space-x-2">
                 <UserPlus className="w-4 h-4" />
-                Usuários
+                <span>Usuários</span>
               </TabsTrigger>
             )}
           </TabsList>
 
-          {/* Tab Cestas Básicas */}
-          <TabsContent value="cestas" className="space-y-6">
+          {/* Aba Cestas Básicas */}
+          <TabsContent value="cestas">
             <Card>
               <CardHeader>
                 <CardTitle>Gerenciar Cestas Básicas</CardTitle>
-                <CardDescription>
-                  Crie e gerencie cestas básicas para distribuição
-                </CardDescription>
+                <CardDescription>Crie e gerencie cestas básicas para distribuição</CardDescription>
               </CardHeader>
-              <CardContent>
-                <div className="flex gap-4 mb-6">
+              <CardContent className="space-y-6">
+                <div className="flex space-x-4">
                   <Input
                     placeholder="Nome da nova cesta básica"
                     value={novaCesta}
                     onChange={(e) => setNovaCesta(e.target.value)}
                     className="flex-1"
                   />
-                  <Button onClick={criarCesta}>
-                    Criar Cesta
+                  <Button onClick={criarCesta} disabled={loading}>
+                    {loading ? 'Criando...' : 'Criar Cesta'}
                   </Button>
                   <Button variant="outline" onClick={carregarCestas}>
                     Atualizar Lista
                   </Button>
                 </div>
 
-                <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-                  {cestas.map((cesta) => (
-                    <Card key={cesta.id} className="border-l-4 border-l-blue-500">
-                      <CardHeader className="pb-3">
-                        <div className="flex justify-between items-start">
-                          <CardTitle className="text-lg">{cesta.nomeCesta}</CardTitle>
-                          <Badge variant={cesta.status === 'Montada' ? 'default' : 'secondary'}>
-                            {cesta.status}
-                          </Badge>
+                <div className="border rounded-lg p-6">
+                  {cestas.length === 0 ? (
+                    <div className="text-center py-8">
+                      <Package className="w-12 h-12 text-gray-400 mx-auto mb-4" />
+                      <p className="text-gray-500">Nenhuma cesta básica encontrada.</p>
+                      <p className="text-gray-400 text-sm">Crie uma nova cesta para começar.</p>
+                    </div>
+                  ) : (
+                    <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                      {cestas.map((cesta, index) => (
+                        <div key={index} className="border rounded-lg p-4">
+                          <h3 className="font-medium">{cesta.nomeCesta || cesta.nome || `Cesta ${index + 1}`}</h3>
+                          <p className="text-sm text-gray-500">Status: {cesta.status || 'Ativa'}</p>
+                          <p className="text-sm text-gray-500">Data: {cesta.dataMontagem || new Date().toLocaleDateString()}</p>
                         </div>
-                        <CardDescription>
-                          Data: {new Date(cesta.dataMontagem).toLocaleDateString('pt-BR')}
-                        </CardDescription>
-                      </CardHeader>
-                      <CardContent>
-                        <div className="flex gap-2">
-                          <Button size="sm" variant="outline">
-                            Editar
-                          </Button>
-                          <Button size="sm" variant="outline">
-                            Ver Itens
-                          </Button>
-                        </div>
-                      </CardContent>
-                    </Card>
-                  ))}
+                      ))}
+                    </div>
+                  )}
                 </div>
-
-                {cestas.length === 0 && (
-                  <div className="text-center py-8 text-gray-500">
-                    <Package className="w-12 h-12 mx-auto mb-4 opacity-50" />
-                    <p>Nenhuma cesta básica encontrada.</p>
-                    <p className="text-sm">Crie uma nova cesta para começar.</p>
-                  </div>
-                )}
               </CardContent>
             </Card>
           </TabsContent>
 
-          {/* Tab Beneficiados */}
-          <TabsContent value="beneficiados" className="space-y-6">
+          {/* Aba Beneficiados */}
+          <TabsContent value="beneficiados">
             <Card>
               <CardHeader>
                 <CardTitle>Gerenciar Beneficiados</CardTitle>
-                <CardDescription>
-                  Cadastre e gerencie os beneficiados do programa
-                </CardDescription>
+                <CardDescription>Cadastre e gerencie os beneficiados do programa</CardDescription>
               </CardHeader>
-              <CardContent>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+              <CardContent className="space-y-6">
+                <div className="grid gap-4 md:grid-cols-2">
                   <div className="space-y-2">
                     <Label htmlFor="nome">Nome *</Label>
                     <Input
@@ -527,7 +643,6 @@ function App() {
                     <Input
                       id="rendaFamiliar"
                       type="number"
-                      step="0.01"
                       placeholder="0.00"
                       value={novoBeneficiado.rendaFamiliar}
                       onChange={(e) => setNovoBeneficiado({...novoBeneficiado, rendaFamiliar: e.target.value})}
@@ -543,76 +658,60 @@ function App() {
                       onChange={(e) => setNovoBeneficiado({...novoBeneficiado, numeroDependentes: e.target.value})}
                     />
                   </div>
-                  <div className="space-y-2 md:col-span-2">
-                    <Label htmlFor="endereco">Endereço</Label>
-                    <Textarea
-                      id="endereco"
-                      placeholder="Endereço completo"
-                      value={novoBeneficiado.endereco}
-                      onChange={(e) => setNovoBeneficiado({...novoBeneficiado, endereco: e.target.value})}
-                    />
-                  </div>
                 </div>
                 
-                <div className="flex gap-4 mb-6">
-                  <Button onClick={criarBeneficiado}>
-                    Cadastrar Beneficiado
+                <div className="space-y-2">
+                  <Label htmlFor="endereco">Endereço</Label>
+                  <Textarea
+                    id="endereco"
+                    placeholder="Endereço completo"
+                    value={novoBeneficiado.endereco}
+                    onChange={(e) => setNovoBeneficiado({...novoBeneficiado, endereco: e.target.value})}
+                  />
+                </div>
+
+                <div className="flex space-x-4">
+                  <Button onClick={criarBeneficiado} disabled={loading}>
+                    {loading ? 'Cadastrando...' : 'Cadastrar Beneficiado'}
                   </Button>
                   <Button variant="outline" onClick={carregarBeneficiados}>
                     Atualizar Lista
                   </Button>
                 </div>
 
-                <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-                  {beneficiados.map((beneficiado) => (
-                    <Card key={beneficiado.id} className="border-l-4 border-l-green-500">
-                      <CardHeader className="pb-3">
-                        <CardTitle className="text-lg">{beneficiado.nome}</CardTitle>
-                        <CardDescription>
-                          CPF: {beneficiado.cpf}
-                        </CardDescription>
-                      </CardHeader>
-                      <CardContent>
-                        <div className="space-y-1 text-sm">
-                          {beneficiado.telefone && <p>Tel: {beneficiado.telefone}</p>}
-                          {beneficiado.rendaFamiliar && <p>Renda: R$ {beneficiado.rendaFamiliar}</p>}
-                          {beneficiado.numeroDependentes && <p>Dependentes: {beneficiado.numeroDependentes}</p>}
+                <div className="border rounded-lg p-6">
+                  {beneficiados.length === 0 ? (
+                    <div className="text-center py-8">
+                      <Users className="w-12 h-12 text-gray-400 mx-auto mb-4" />
+                      <p className="text-gray-500">Nenhum beneficiado cadastrado.</p>
+                      <p className="text-gray-400 text-sm">Cadastre um novo beneficiado para começar.</p>
+                    </div>
+                  ) : (
+                    <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                      {beneficiados.map((beneficiado, index) => (
+                        <div key={index} className="border rounded-lg p-4">
+                          <h3 className="font-medium">{beneficiado.nome}</h3>
+                          <p className="text-sm text-gray-500">CPF: {beneficiado.cpf}</p>
+                          <p className="text-sm text-gray-500">Telefone: {beneficiado.telefone || 'Não informado'}</p>
+                          <p className="text-sm text-gray-500">Dependentes: {beneficiado.numeroDependentes || 0}</p>
                         </div>
-                        <div className="flex gap-2 mt-4">
-                          <Button size="sm" variant="outline">
-                            <Edit className="w-4 h-4" />
-                          </Button>
-                          <Button size="sm" variant="outline">
-                            Ver Histórico
-                          </Button>
-                        </div>
-                      </CardContent>
-                    </Card>
-                  ))}
+                      ))}
+                    </div>
+                  )}
                 </div>
-
-                {beneficiados.length === 0 && (
-                  <div className="text-center py-8 text-gray-500">
-                    <Users className="w-12 h-12 mx-auto mb-4 opacity-50" />
-                    <p>Nenhum beneficiado cadastrado.</p>
-                    <p className="text-sm">Cadastre um novo beneficiado para começar.</p>
-                  </div>
-                )}
               </CardContent>
             </Card>
           </TabsContent>
 
-          {/* Tab Doações */}
-          <TabsContent value="doacoes" className="space-y-6">
+          {/* Aba Doações */}
+          <TabsContent value="doacoes">
             <Card>
               <CardHeader>
                 <CardTitle>Registrar Doações</CardTitle>
-                <CardDescription>
-                  Registre e gerencie doações recebidas
-                </CardDescription>
+                <CardDescription>Registre e gerencie doações recebidas</CardDescription>
               </CardHeader>
-              <CardContent>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+              <CardContent className="space-y-6">
+                <div className="grid gap-4 md:grid-cols-2">
                   <div className="space-y-2">
                     <Label htmlFor="tipoAlimento">Tipo de Alimento *</Label>
                     <Input
@@ -624,29 +723,16 @@ function App() {
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="quantidade">Quantidade *</Label>
-                    <div className="flex gap-2">
+                    <div className="flex space-x-2">
                       <Input
                         id="quantidade"
                         type="number"
-                        step="0.01"
                         placeholder="0.00"
                         value={novaDoacao.quantidade}
                         onChange={(e) => setNovaDoacao({...novaDoacao, quantidade: e.target.value})}
                         className="flex-1"
                       />
-                      <Select value={novaDoacao.unidadeMedida} onValueChange={(value) => setNovaDoacao({...novaDoacao, unidadeMedida: value})}>
-                        <SelectTrigger className="w-24">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="kg">kg</SelectItem>
-                          <SelectItem value="g">g</SelectItem>
-                          <SelectItem value="l">l</SelectItem>
-                          <SelectItem value="ml">ml</SelectItem>
-                          <SelectItem value="un">un</SelectItem>
-                          <SelectItem value="cx">cx</SelectItem>
-                        </SelectContent>
-                      </Select>
+                      <Button variant="outline" disabled>kg</Button>
                     </div>
                   </div>
                   <div className="space-y-2">
@@ -676,93 +762,77 @@ function App() {
                       onChange={(e) => setNovaDoacao({...novaDoacao, origem: e.target.value})}
                     />
                   </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="observacoes">Observações</Label>
-                    <Textarea
-                      id="observacoes"
-                      placeholder="Observações adicionais"
-                      value={novaDoacao.observacoes}
-                      onChange={(e) => setNovaDoacao({...novaDoacao, observacoes: e.target.value})}
-                    />
-                  </div>
                 </div>
                 
-                <div className="flex gap-4 mb-6">
-                  <Button onClick={criarDoacao}>
-                    Registrar Doação
+                <div className="space-y-2">
+                  <Label htmlFor="observacoes">Observações</Label>
+                  <Textarea
+                    id="observacoes"
+                    placeholder="Observações adicionais"
+                    value={novaDoacao.observacoes}
+                    onChange={(e) => setNovaDoacao({...novaDoacao, observacoes: e.target.value})}
+                  />
+                </div>
+
+                <div className="flex space-x-4">
+                  <Button onClick={criarDoacao} disabled={loading}>
+                    {loading ? 'Registrando...' : 'Registrar Doação'}
                   </Button>
                   <Button variant="outline" onClick={carregarDoacoes}>
                     Atualizar Lista
                   </Button>
                 </div>
 
-                <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-                  {doacoes.map((doacao) => (
-                    <Card key={doacao.id} className="border-l-4 border-l-orange-500">
-                      <CardHeader className="pb-3">
-                        <CardTitle className="text-lg">{doacao.tipoAlimento}</CardTitle>
-                        <CardDescription>
-                          {doacao.quantidade} {doacao.unidadeMedida}
-                        </CardDescription>
-                      </CardHeader>
-                      <CardContent>
-                        <div className="space-y-1 text-sm">
-                          {doacao.dataRecebimento && <p>Recebido: {new Date(doacao.dataRecebimento).toLocaleDateString('pt-BR')}</p>}
-                          {doacao.dataValidade && <p>Validade: {new Date(doacao.dataValidade).toLocaleDateString('pt-BR')}</p>}
-                          {doacao.origem && <p>Origem: {doacao.origem}</p>}
+                <div className="border rounded-lg p-6">
+                  {doacoes.length === 0 ? (
+                    <div className="text-center py-8">
+                      <ShoppingCart className="w-12 h-12 text-gray-400 mx-auto mb-4" />
+                      <p className="text-gray-500">Nenhuma doação registrada.</p>
+                      <p className="text-gray-400 text-sm">Registre uma nova doação para começar.</p>
+                    </div>
+                  ) : (
+                    <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                      {doacoes.map((doacao, index) => (
+                        <div key={index} className="border rounded-lg p-4">
+                          <h3 className="font-medium">{doacao.tipoAlimento}</h3>
+                          <p className="text-sm text-gray-500">Quantidade: {doacao.quantidade} kg</p>
+                          <p className="text-sm text-gray-500">Origem: {doacao.origem || 'Não informado'}</p>
+                          <p className="text-sm text-gray-500">Recebimento: {doacao.dataRecebimento || 'Não informado'}</p>
                         </div>
-                        <div className="flex gap-2 mt-4">
-                          <Button size="sm" variant="outline">
-                            <Edit className="w-4 h-4" />
-                          </Button>
-                          <Button size="sm" variant="outline">
-                            Usar em Cesta
-                          </Button>
-                        </div>
-                      </CardContent>
-                    </Card>
-                  ))}
+                      ))}
+                    </div>
+                  )}
                 </div>
-
-                {doacoes.length === 0 && (
-                  <div className="text-center py-8 text-gray-500">
-                    <ShoppingCart className="w-12 h-12 mx-auto mb-4 opacity-50" />
-                    <p>Nenhuma doação registrada.</p>
-                    <p className="text-sm">Registre uma nova doação para começar.</p>
-                  </div>
-                )}
               </CardContent>
             </Card>
           </TabsContent>
 
-          {/* Tab Relatórios */}
-          <TabsContent value="relatorios" className="space-y-6">
+          {/* Aba Relatórios */}
+          <TabsContent value="relatorios">
             <div className="grid gap-6 md:grid-cols-2">
               <Card>
                 <CardHeader>
                   <CardTitle>Resumo Geral</CardTitle>
                 </CardHeader>
-                <CardContent>
-                  <div className="space-y-4">
-                    <div className="flex justify-between">
-                      <span>Total de Cestas:</span>
-                      <Badge variant="outline">{cestas.length}</Badge>
-                    </div>
-                    <div className="flex justify-between">
-                      <span>Total de Beneficiados:</span>
-                      <Badge variant="outline">{beneficiados.length}</Badge>
-                    </div>
-                    <div className="flex justify-between">
-                      <span>Total de Doações:</span>
-                      <Badge variant="outline">{doacoes.length}</Badge>
-                    </div>
-                    {userRole === 'ADMIN' && (
-                      <div className="flex justify-between">
-                        <span>Total de Usuários:</span>
-                        <Badge variant="outline">{usuarios.length}</Badge>
-                      </div>
-                    )}
+                <CardContent className="space-y-4">
+                  <div className="flex justify-between">
+                    <span>Total de Cestas:</span>
+                    <Badge variant="secondary">{stats.totalCestas}</Badge>
                   </div>
+                  <div className="flex justify-between">
+                    <span>Total de Beneficiados:</span>
+                    <Badge variant="secondary">{stats.totalBeneficiados}</Badge>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Total de Doações:</span>
+                    <Badge variant="secondary">{stats.totalDoacoes}</Badge>
+                  </div>
+                  {userRole === 'ADMIN' && (
+                    <div className="flex justify-between">
+                      <span>Total de Usuários:</span>
+                      <Badge variant="secondary">{stats.totalUsuarios}</Badge>
+                    </div>
+                  )}
                 </CardContent>
               </Card>
 
@@ -770,35 +840,46 @@ function App() {
                 <CardHeader>
                   <CardTitle>Ações Rápidas</CardTitle>
                 </CardHeader>
-                <CardContent>
-                  <div className="space-y-2">
-                    <Button variant="outline" className="w-full justify-start">
-                      Exportar Relatório de Beneficiados
-                    </Button>
-                    <Button variant="outline" className="w-full justify-start">
-                      Exportar Relatório de Doações
-                    </Button>
-                    <Button variant="outline" className="w-full justify-start">
-                      Relatório de Distribuições
-                    </Button>
-                  </div>
+                <CardContent className="space-y-3">
+                  <Button 
+                    variant="outline" 
+                    className="w-full justify-start"
+                    onClick={() => exportarRelatorio('beneficiados')}
+                    disabled={loading}
+                  >
+                    Exportar Relatório de Beneficiados
+                  </Button>
+                  <Button 
+                    variant="outline" 
+                    className="w-full justify-start"
+                    onClick={() => exportarRelatorio('doacoes')}
+                    disabled={loading}
+                  >
+                    Exportar Relatório de Doações
+                  </Button>
+                  <Button 
+                    variant="outline" 
+                    className="w-full justify-start"
+                    onClick={() => exportarRelatorio('distribuicoes')}
+                    disabled={loading}
+                  >
+                    Relatório de Distribuições
+                  </Button>
                 </CardContent>
               </Card>
             </div>
           </TabsContent>
 
-          {/* Tab Usuários (Admin) */}
+          {/* Aba Usuários (apenas para admin) */}
           {userRole === 'ADMIN' && (
-            <TabsContent value="usuarios" className="space-y-6">
+            <TabsContent value="usuarios">
               <Card>
                 <CardHeader>
                   <CardTitle>Gerenciar Usuários</CardTitle>
-                  <CardDescription>
-                    Crie e gerencie usuários do sistema (apenas administradores)
-                  </CardDescription>
+                  <CardDescription>Crie e gerencie usuários do sistema (apenas administradores)</CardDescription>
                 </CardHeader>
-                <CardContent>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+                <CardContent className="space-y-6">
+                  <div className="grid gap-4 md:grid-cols-2">
                     <div className="space-y-2">
                       <Label htmlFor="username">Nome de Usuário *</Label>
                       <Input
@@ -832,7 +913,7 @@ function App() {
                       <Label htmlFor="role">Função</Label>
                       <Select value={novoUsuario.role} onValueChange={(value) => setNovoUsuario({...novoUsuario, role: value})}>
                         <SelectTrigger>
-                          <SelectValue />
+                          <SelectValue placeholder="Selecione a função" />
                         </SelectTrigger>
                         <SelectContent>
                           <SelectItem value="USER">Usuário</SelectItem>
@@ -841,56 +922,37 @@ function App() {
                       </Select>
                     </div>
                   </div>
-                  
-                  <div className="flex gap-4 mb-6">
-                    <Button onClick={criarUsuario}>
-                      Criar Usuário
+
+                  <div className="flex space-x-4">
+                    <Button onClick={criarUsuario} disabled={loading}>
+                      {loading ? 'Criando...' : 'Criar Usuário'}
                     </Button>
                     <Button variant="outline" onClick={carregarUsuarios}>
                       Atualizar Lista
                     </Button>
                   </div>
 
-                  <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-                    {usuarios.map((usuario) => (
-                      <Card key={usuario.id} className="border-l-4 border-l-purple-500">
-                        <CardHeader className="pb-3">
-                          <div className="flex justify-between items-start">
-                            <CardTitle className="text-lg">{usuario.username}</CardTitle>
+                  <div className="border rounded-lg p-6">
+                    {usuarios.length === 0 ? (
+                      <div className="text-center py-8">
+                        <UserPlus className="w-12 h-12 text-gray-400 mx-auto mb-4" />
+                        <p className="text-gray-500">Nenhum usuário encontrado.</p>
+                        <p className="text-gray-400 text-sm">Crie um novo usuário para começar.</p>
+                      </div>
+                    ) : (
+                      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                        {usuarios.map((usuario, index) => (
+                          <div key={index} className="border rounded-lg p-4">
+                            <h3 className="font-medium">{usuario.username}</h3>
+                            <p className="text-sm text-gray-500">Email: {usuario.email || 'Não informado'}</p>
                             <Badge variant={usuario.role === 'ADMIN' ? 'default' : 'secondary'}>
                               {usuario.role}
                             </Badge>
                           </div>
-                          <CardDescription>
-                            {usuario.email || 'Sem email'}
-                          </CardDescription>
-                        </CardHeader>
-                        <CardContent>
-                          <div className="flex gap-2">
-                            <Button size="sm" variant="outline">
-                              <Edit className="w-4 h-4" />
-                            </Button>
-                            <Button 
-                              size="sm" 
-                              variant="outline" 
-                              onClick={() => deletarUsuario(usuario.id)}
-                              className="text-red-600 hover:text-red-700"
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </Button>
-                          </div>
-                        </CardContent>
-                      </Card>
-                    ))}
+                        ))}
+                      </div>
+                    )}
                   </div>
-
-                  {usuarios.length === 0 && (
-                    <div className="text-center py-8 text-gray-500">
-                      <UserPlus className="w-12 h-12 mx-auto mb-4 opacity-50" />
-                      <p>Nenhum usuário encontrado.</p>
-                      <p className="text-sm">Crie um novo usuário para começar.</p>
-                    </div>
-                  )}
                 </CardContent>
               </Card>
             </TabsContent>
