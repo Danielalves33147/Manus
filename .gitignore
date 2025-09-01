@@ -1,0 +1,10 @@
+backend/target/
+frontend/node_modules/
+*.zip
+.DS_Store
+.env
+.idea/
+.vscode/
+*.log
+
+
