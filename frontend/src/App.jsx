@@ -13,6 +13,7 @@ import './App.css'
 function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(false)
   const [userRole, setUserRole] = useState('')
+  const [currentUser, setCurrentUser] = useState('')
   const [loginData, setLoginData] = useState({ username: '', password: '' })
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -63,41 +64,18 @@ function App() {
 
   const API_BASE = 'http://localhost:8080/api'
 
-  // Função para obter headers com autenticação
-  const getAuthHeaders = () => {
-    const token = localStorage.getItem('token')
-    if (!token) {
-      console.warn('Token não encontrado')
-      return {
-        'Content-Type': 'application/json'
-      }
-    }
-    return {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${token}`
-    }
-  }
-
-  // Função para fazer requisições autenticadas
-  const fetchWithAuth = async (url, options = {}) => {
-    const headers = getAuthHeaders()
+  // Função para fazer requisições simples (sem JWT)
+  const fetchAPI = async (url, options = {}) => {
     const config = {
-      ...options,
       headers: {
-        ...headers,
+        'Content-Type': 'application/json',
         ...options.headers
-      }
+      },
+      ...options
     }
     
     try {
       const response = await fetch(url, config)
-      
-      if (response.status === 401) {
-        // Token inválido ou expirado
-        handleLogout()
-        throw new Error('Sessão expirada. Faça login novamente.')
-      }
-      
       return response
     } catch (error) {
       console.error('Erro na requisição:', error)
@@ -105,14 +83,15 @@ function App() {
     }
   }
 
-  // Verificar se há token salvo ao carregar a página
+  // Verificar se há sessão salva ao carregar a página
   useEffect(() => {
-    const token = localStorage.getItem('token')
-    const role = localStorage.getItem('userRole')
-    if (token && role) {
+    const savedUser = localStorage.getItem('currentUser')
+    const savedRole = localStorage.getItem('userRole')
+    if (savedUser && savedRole) {
       setIsLoggedIn(true)
-      setUserRole(role)
-      carregarDadosIniciais(role)
+      setUserRole(savedRole)
+      setCurrentUser(savedUser)
+      carregarDadosIniciais(savedRole)
     }
   }, [])
 
@@ -139,26 +118,28 @@ function App() {
     setError('')
     
     try {
-      const response = await fetch(`${API_BASE}/auth/login`, {
+      const response = await fetchAPI(`${API_BASE}/auth/login`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
         body: JSON.stringify(loginData),
       })
       
       if (response.ok) {
         const data = await response.json()
-        localStorage.setItem('token', data.token)
-        localStorage.setItem('userRole', data.role)
-        setUserRole(data.role)
-        setIsLoggedIn(true)
-        
-        // Carregar dados iniciais
-        await carregarDadosIniciais(data.role)
+        if (data.success) {
+          localStorage.setItem('currentUser', data.username)
+          localStorage.setItem('userRole', data.role)
+          setUserRole(data.role)
+          setCurrentUser(data.username)
+          setIsLoggedIn(true)
+          
+          // Carregar dados iniciais
+          await carregarDadosIniciais(data.role)
+        } else {
+          setError(data.message || 'Erro no login')
+        }
       } else {
-        const errorData = await response.text()
-        setError('Erro no login: ' + errorData)
+        const errorData = await response.json()
+        setError(errorData.message || 'Erro no login')
       }
     } catch (error) {
       console.error('Erro no login:', error)
@@ -169,10 +150,11 @@ function App() {
   }
 
   const handleLogout = () => {
-    localStorage.removeItem('token')
+    localStorage.removeItem('currentUser')
     localStorage.removeItem('userRole')
     setIsLoggedIn(false)
     setUserRole('')
+    setCurrentUser('')
     setCestas([])
     setBeneficiados([])
     setDoacoes([])
@@ -189,7 +171,7 @@ function App() {
     
     setLoading(true)
     try {
-      const response = await fetchWithAuth(`${API_BASE}/cestas-basicas`, {
+      const response = await fetchAPI(`${API_BASE}/cestas-basicas`, {
         method: 'POST',
         body: JSON.stringify({ nomeCesta: novaCesta }),
       })
@@ -213,7 +195,7 @@ function App() {
 
   const carregarCestas = async () => {
     try {
-      const response = await fetchWithAuth(`${API_BASE}/cestas-basicas`)
+      const response = await fetchAPI(`${API_BASE}/cestas-basicas`)
       
       if (response.ok) {
         const data = await response.json()
@@ -233,7 +215,7 @@ function App() {
     
     setLoading(true)
     try {
-      const response = await fetchWithAuth(`${API_BASE}/beneficiados`, {
+      const response = await fetchAPI(`${API_BASE}/beneficiados`, {
         method: 'POST',
         body: JSON.stringify(novoBeneficiado),
       })
@@ -265,7 +247,7 @@ function App() {
 
   const carregarBeneficiados = async () => {
     try {
-      const response = await fetchWithAuth(`${API_BASE}/beneficiados`)
+      const response = await fetchAPI(`${API_BASE}/beneficiados`)
       
       if (response.ok) {
         const data = await response.json()
@@ -285,7 +267,7 @@ function App() {
     
     setLoading(true)
     try {
-      const response = await fetchWithAuth(`${API_BASE}/doacoes`, {
+      const response = await fetchAPI(`${API_BASE}/doacoes`, {
         method: 'POST',
         body: JSON.stringify({
           ...novaDoacao,
@@ -319,7 +301,7 @@ function App() {
 
   const carregarDoacoes = async () => {
     try {
-      const response = await fetchWithAuth(`${API_BASE}/doacoes`)
+      const response = await fetchAPI(`${API_BASE}/doacoes`)
       
       if (response.ok) {
         const data = await response.json()
@@ -339,7 +321,7 @@ function App() {
     
     setLoading(true)
     try {
-      const response = await fetchWithAuth(`${API_BASE}/users`, {
+      const response = await fetchAPI(`${API_BASE}/users`, {
         method: 'POST',
         body: JSON.stringify(novoUsuario),
       })
@@ -368,7 +350,7 @@ function App() {
 
   const carregarUsuarios = async () => {
     try {
-      const response = await fetchWithAuth(`${API_BASE}/users`)
+      const response = await fetchAPI(`${API_BASE}/users`)
       
       if (response.ok) {
         const data = await response.json()
@@ -504,6 +486,7 @@ function App() {
               <Heart className="w-8 h-8 text-red-600" />
               <h1 className="text-xl font-bold text-gray-900">Sistema de Doações</h1>
               <Badge variant="secondary">{userRole}</Badge>
+              <span className="text-sm text-gray-600">Olá, {currentUser}!</span>
             </div>
             <Button variant="outline" onClick={handleLogout}>
               Sair
