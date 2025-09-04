@@ -7,7 +7,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs.j
 import { Badge } from '@/components/ui/badge.jsx'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select.jsx'
 import { Textarea } from '@/components/ui/textarea.jsx'
-import { Heart, Package, Users, ShoppingCart, UserPlus, Trash2, Edit, AlertCircle } from 'lucide-react'
+import { Heart, Package, Users, ShoppingCart, UserPlus, Trash2, Edit, AlertCircle, Bell } from 'lucide-react'
 import './App.css'
 
 function App() {
@@ -62,6 +62,15 @@ function App() {
     totalUsuarios: 0
   })
 
+  // Estados para alertas
+  const [alertas, setAlertas] = useState({
+    dashboard: null,
+    vencimento: [],
+    estoqueBaixo: [],
+    beneficiados: []
+  })
+  const [loadingAlertas, setLoadingAlertas] = useState(false)
+
   const API_BASE = 'http://localhost:8080/api'
 
   // Função para fazer requisições simples (sem JWT)
@@ -101,7 +110,8 @@ function App() {
         carregarCestas(),
         carregarBeneficiados(),
         carregarDoacoes(),
-        carregarEstatisticas()
+        carregarEstatisticas(),
+        carregarAlertas()
       ])
       
       if (role === 'ADMIN') {
@@ -375,6 +385,44 @@ function App() {
     }
   }
 
+  // Função para carregar alertas
+  const carregarAlertas = async () => {
+    setLoadingAlertas(true)
+    try {
+      // Carregar dashboard de alertas
+      const dashboardResponse = await fetchAPI(`${API_BASE}/api/alertas/dashboard`)
+      if (dashboardResponse.ok) {
+        const dashboardData = await dashboardResponse.json()
+        setAlertas(prev => ({ ...prev, dashboard: dashboardData }))
+      }
+
+      // Carregar alertas de vencimento
+      const vencimentoResponse = await fetchAPI(`${API_BASE}/api/alertas/vencimento`)
+      if (vencimentoResponse.ok) {
+        const vencimentoData = await vencimentoResponse.json()
+        setAlertas(prev => ({ ...prev, vencimento: vencimentoData }))
+      }
+
+      // Carregar alertas de estoque baixo
+      const estoqueResponse = await fetchAPI(`${API_BASE}/api/alertas/estoque-baixo`)
+      if (estoqueResponse.ok) {
+        const estoqueData = await estoqueResponse.json()
+        setAlertas(prev => ({ ...prev, estoqueBaixo: estoqueData }))
+      }
+
+      // Carregar alertas de beneficiados
+      const beneficiadosResponse = await fetchAPI(`${API_BASE}/api/alertas/beneficiados-inativos`)
+      if (beneficiadosResponse.ok) {
+        const beneficiadosData = await beneficiadosResponse.json()
+        setAlertas(prev => ({ ...prev, beneficiados: beneficiadosData }))
+      }
+    } catch (error) {
+      console.error('Erro ao carregar alertas:', error)
+    } finally {
+      setLoadingAlertas(false)
+    }
+  }
+
   // Função para exportar relatórios
   const exportarRelatorio = async (tipo) => {
     setLoading(true)
@@ -505,7 +553,7 @@ function App() {
         )}
 
         <Tabs defaultValue="cestas" className="space-y-6">
-          <TabsList className="grid w-full grid-cols-5 lg:grid-cols-6">
+          <TabsList className="grid w-full grid-cols-6 lg:grid-cols-7">
             <TabsTrigger value="cestas" className="flex items-center space-x-2">
               <Package className="w-4 h-4" />
               <span>Cestas Básicas</span>
@@ -517,6 +565,15 @@ function App() {
             <TabsTrigger value="doacoes" className="flex items-center space-x-2">
               <ShoppingCart className="w-4 h-4" />
               <span>Doações</span>
+            </TabsTrigger>
+            <TabsTrigger value="alertas" className="flex items-center space-x-2">
+              <Bell className="w-4 h-4" />
+              <span>Alertas</span>
+              {alertas.dashboard && alertas.dashboard.totalAlertas > 0 && (
+                <Badge variant="destructive" className="ml-1 text-xs">
+                  {alertas.dashboard.totalAlertas}
+                </Badge>
+              )}
             </TabsTrigger>
             <TabsTrigger value="relatorios" className="flex items-center space-x-2">
               <Heart className="w-4 h-4" />
@@ -788,6 +845,179 @@ function App() {
                 </div>
               </CardContent>
             </Card>
+          </TabsContent>
+
+          {/* Aba Alertas */}
+          <TabsContent value="alertas">
+            <div className="space-y-6">
+              {/* Dashboard de Alertas */}
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center space-x-2">
+                    <Bell className="w-5 h-5" />
+                    <span>Dashboard de Alertas</span>
+                    <Button 
+                      variant="outline" 
+                      size="sm" 
+                      onClick={carregarAlertas}
+                      disabled={loadingAlertas}
+                    >
+                      {loadingAlertas ? 'Atualizando...' : 'Atualizar'}
+                    </Button>
+                  </CardTitle>
+                  <CardDescription>
+                    Monitoramento em tempo real de alertas do sistema
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  {alertas.dashboard ? (
+                    <div className="grid gap-4 md:grid-cols-4">
+                      <div className="p-4 bg-red-50 border border-red-200 rounded-lg">
+                        <div className="text-2xl font-bold text-red-600">
+                          {alertas.dashboard.alertasCriticos}
+                        </div>
+                        <div className="text-sm text-red-800">Alertas Críticos</div>
+                      </div>
+                      <div className="p-4 bg-orange-50 border border-orange-200 rounded-lg">
+                        <div className="text-2xl font-bold text-orange-600">
+                          {alertas.dashboard.alertasAltos}
+                        </div>
+                        <div className="text-sm text-orange-800">Alertas Altos</div>
+                      </div>
+                      <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
+                        <div className="text-2xl font-bold text-yellow-600">
+                          {alertas.dashboard.totalAlertasVencimento}
+                        </div>
+                        <div className="text-sm text-yellow-800">Próximos ao Vencimento</div>
+                      </div>
+                      <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                        <div className="text-2xl font-bold text-blue-600">
+                          {alertas.dashboard.totalAlertas}
+                        </div>
+                        <div className="text-sm text-blue-800">Total de Alertas</div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="text-center py-8">
+                      <div className="text-gray-500">Carregando dashboard de alertas...</div>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+
+              {/* Alertas de Vencimento */}
+              <Card>
+                <CardHeader>
+                  <CardTitle>Produtos Próximos ao Vencimento</CardTitle>
+                  <CardDescription>
+                    Alimentos que vencem nos próximos 30 dias
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  {alertas.vencimento.length > 0 ? (
+                    <div className="space-y-3">
+                      {alertas.vencimento.map((alerta, index) => (
+                        <div 
+                          key={index}
+                          className={`p-4 border rounded-lg ${
+                            alerta.prioridade === 'CRÍTICO' ? 'bg-red-50 border-red-200' :
+                            alerta.prioridade === 'ALTO' ? 'bg-orange-50 border-orange-200' :
+                            'bg-yellow-50 border-yellow-200'
+                          }`}
+                        >
+                          <div className="flex justify-between items-start">
+                            <div>
+                              <div className="font-medium">{alerta.tipoAlimento}</div>
+                              <div className="text-sm text-gray-600">{alerta.mensagem}</div>
+                              <div className="text-xs text-gray-500 mt-1">
+                                Local: {alerta.localArmazenamento} | Quantidade: {alerta.quantidadeDisponivel}
+                              </div>
+                            </div>
+                            <Badge 
+                              variant={
+                                alerta.prioridade === 'CRÍTICO' ? 'destructive' :
+                                alerta.prioridade === 'ALTO' ? 'default' : 'secondary'
+                              }
+                            >
+                              {alerta.prioridade}
+                            </Badge>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="text-center py-8 text-gray-500">
+                      Nenhum produto próximo ao vencimento
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+
+              {/* Alertas de Estoque Baixo */}
+              <Card>
+                <CardHeader>
+                  <CardTitle>Estoque Baixo</CardTitle>
+                  <CardDescription>
+                    Produtos com estoque abaixo do limite mínimo
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  {alertas.estoqueBaixo.length > 0 ? (
+                    <div className="space-y-3">
+                      {alertas.estoqueBaixo.map((alerta, index) => (
+                        <div key={index} className="p-4 bg-orange-50 border border-orange-200 rounded-lg">
+                          <div className="flex justify-between items-start">
+                            <div>
+                              <div className="font-medium">{alerta.tipoAlimento}</div>
+                              <div className="text-sm text-gray-600">{alerta.mensagem}</div>
+                            </div>
+                            <Badge variant="default">{alerta.prioridade}</Badge>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="text-center py-8 text-gray-500">
+                      Todos os produtos têm estoque adequado
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+
+              {/* Alertas de Beneficiados */}
+              <Card>
+                <CardHeader>
+                  <CardTitle>Beneficiados Inativos</CardTitle>
+                  <CardDescription>
+                    Beneficiados que não recebem doações há mais de 90 dias
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  {alertas.beneficiados.length > 0 ? (
+                    <div className="space-y-3">
+                      {alertas.beneficiados.map((alerta, index) => (
+                        <div key={index} className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                          <div className="flex justify-between items-start">
+                            <div>
+                              <div className="font-medium">{alerta.nome}</div>
+                              <div className="text-sm text-gray-600">{alerta.mensagem}</div>
+                              <div className="text-xs text-gray-500 mt-1">
+                                CPF: {alerta.cpf} | Telefone: {alerta.telefone}
+                              </div>
+                            </div>
+                            <Badge variant="secondary">{alerta.prioridade}</Badge>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="text-center py-8 text-gray-500">
+                      Todos os beneficiados estão ativos
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            </div>
           </TabsContent>
 
           {/* Aba Relatórios */}

@@ -48,6 +48,14 @@ public class CestaBasicaService {
         return cestaBasicaRepository.save(cesta);
     }
 
+    public CestaBasica salvarCesta(CestaBasica cesta) {
+        return cestaBasicaRepository.save(cesta);
+    }
+
+    public long contarTodasCestas() {
+        return cestaBasicaRepository.count();
+    }
+
     public CestaBasica adicionarItemACesta(UUID cestaId, UUID alimentoEstoqueId, Double quantidade) {
         Optional<CestaBasica> cestaOpt = cestaBasicaRepository.findById(cestaId);
         Optional<AlimentoEstoque> alimentoOpt = alimentoEstoqueRepository.findById(alimentoEstoqueId);

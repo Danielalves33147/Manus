@@ -1,7 +1,12 @@
 package com.church.fooddonation.controller;
 
 import com.church.fooddonation.entity.CestaBasica;
+import com.church.fooddonation.entity.PreDefinicaoCesta;
+import com.church.fooddonation.entity.ItemPreDefinicao;
+import com.church.fooddonation.entity.AlimentoEstoque;
 import com.church.fooddonation.service.CestaBasicaService;
+import com.church.fooddonation.repository.PreDefinicaoCestaRepository;
+import com.church.fooddonation.repository.AlimentoEstoqueRepository;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -9,19 +14,27 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
 @RestController
-@RequestMapping("/cestas-basicas")
+@RequestMapping("/api/cestas-basicas")
 @CrossOrigin(origins = "*")
 @Tag(name = "Cestas Básicas", description = "Operações relacionadas ao gerenciamento de cestas básicas")
 public class CestaBasicaController {
 
     @Autowired
     private CestaBasicaService cestaBasicaService;
+
+    @Autowired
+    private PreDefinicaoCestaRepository preDefinicaoRepository;
+
+    @Autowired
+    private AlimentoEstoqueRepository estoqueRepository;
 
     @GetMapping
     @Operation(summary = "Listar todas as cestas básicas")
@@ -46,94 +59,197 @@ public class CestaBasicaController {
         }
     }
 
-    @GetMapping("/status/{status}")
-    @Operation(summary = "Buscar cestas básicas por status")
-    public ResponseEntity<List<CestaBasica>> buscarPorStatus(@PathVariable String status) {
-        try {
-            List<CestaBasica> cestas = cestaBasicaService.buscarPorStatus(status);
-            return ResponseEntity.ok(cestas);
-        } catch (Exception e) {
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
-        }
-    }
-
-    @GetMapping("/disponiveis")
-    @Operation(summary = "Buscar cestas básicas montadas e disponíveis")
-    public ResponseEntity<List<CestaBasica>> buscarCestasDisponiveis() {
-        try {
-            List<CestaBasica> cestas = cestaBasicaService.buscarCestasMontadasDisponiveis();
-            return ResponseEntity.ok(cestas);
-        } catch (Exception e) {
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
-        }
-    }
-
     @PostMapping
     @Operation(summary = "Criar nova cesta básica")
-    public ResponseEntity<CestaBasica> criarCesta(@RequestBody Map<String, String> request) {
+    public ResponseEntity<Map<String, Object>> criarCesta(@RequestBody Map<String, String> request) {
         try {
             String nomeCesta = request.get("nomeCesta");
             if (nomeCesta == null || nomeCesta.trim().isEmpty()) {
-                return ResponseEntity.badRequest().build();
+                return ResponseEntity.ok(Map.of(
+                    "success", false,
+                    "message", "Nome da cesta é obrigatório"
+                ));
             }
             
             CestaBasica cesta = cestaBasicaService.criarCesta(nomeCesta);
-            return ResponseEntity.status(HttpStatus.CREATED).body(cesta);
+            return ResponseEntity.ok(Map.of(
+                "success", true,
+                "message", "Cesta criada com sucesso",
+                "cesta", cesta
+            ));
         } catch (Exception e) {
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+            return ResponseEntity.ok(Map.of(
+                "success", false,
+                "message", "Erro ao criar cesta: " + e.getMessage()
+            ));
         }
     }
 
-    @PostMapping("/{cestaId}/itens")
-    @Operation(summary = "Adicionar item à cesta básica")
-    public ResponseEntity<CestaBasica> adicionarItem(
-            @PathVariable UUID cestaId,
-            @RequestBody Map<String, Object> request) {
+    @PostMapping("/montar-pre-definicao")
+    @Operation(summary = "Montar cesta básica baseada em pré-definição")
+    public ResponseEntity<Map<String, Object>> montarCestaPreDefinicao(@RequestBody Map<String, Object> request) {
         try {
-            UUID alimentoEstoqueId = UUID.fromString((String) request.get("alimentoEstoqueId"));
-            Double quantidade = Double.valueOf(request.get("quantidade").toString());
+            String nomeCesta = (String) request.get("nomeCesta");
+            UUID preDefinicaoId = UUID.fromString((String) request.get("preDefinicaoId"));
             
-            CestaBasica cesta = cestaBasicaService.adicionarItemACesta(cestaId, alimentoEstoqueId, quantidade);
-            return ResponseEntity.ok(cesta);
-        } catch (RuntimeException e) {
-            return ResponseEntity.badRequest().build();
+            if (nomeCesta == null || nomeCesta.trim().isEmpty()) {
+                return ResponseEntity.ok(Map.of(
+                    "success", false,
+                    "message", "Nome da cesta é obrigatório"
+                ));
+            }
+
+            PreDefinicaoCesta preDefinicao = preDefinicaoRepository.findByIdWithItens(preDefinicaoId);
+            if (preDefinicao == null) {
+                return ResponseEntity.ok(Map.of(
+                    "success", false,
+                    "message", "Pré-definição não encontrada"
+                ));
+            }
+
+            // Verificar se há estoque suficiente
+            for (ItemPreDefinicao item : preDefinicao.getItens()) {
+                BigDecimal quantidadeDisponivel = estoqueRepository.findQuantidadeDisponivelByTipo(item.getTipoAlimento());
+                if (quantidadeDisponivel == null || quantidadeDisponivel.compareTo(item.getQuantidade()) < 0) {
+                    return ResponseEntity.ok(Map.of(
+                        "success", false,
+                        "message", "Estoque insuficiente para " + item.getTipoAlimento() + 
+                                  ". Disponível: " + (quantidadeDisponivel != null ? quantidadeDisponivel : "0") + 
+                                  ", Necessário: " + item.getQuantidade()
+                    ));
+                }
+            }
+
+            // Criar cesta
+            CestaBasica cesta = cestaBasicaService.criarCesta(nomeCesta);
+
+            // Abater estoque e adicionar itens à cesta
+            for (ItemPreDefinicao item : preDefinicao.getItens()) {
+                // Abater do estoque
+                List<AlimentoEstoque> itensDisponiveis = estoqueRepository
+                    .findByTipoAlimentoAndQuantidadeDisponivelGreaterThan(item.getTipoAlimento(), BigDecimal.ZERO);
+                
+                // Ordenar por data de validade (FIFO)
+                itensDisponiveis.sort((a, b) -> a.getDataValidade().compareTo(b.getDataValidade()));
+                
+                BigDecimal quantidadeRestante = item.getQuantidade();
+                
+                for (AlimentoEstoque estoqueItem : itensDisponiveis) {
+                    if (quantidadeRestante.compareTo(BigDecimal.ZERO) <= 0) break;
+                    
+                    BigDecimal quantidadeItem = estoqueItem.getQuantidadeDisponivel();
+                    
+                    if (quantidadeItem.compareTo(quantidadeRestante) >= 0) {
+                        estoqueItem.setQuantidadeDisponivel(quantidadeItem.subtract(quantidadeRestante));
+                        quantidadeRestante = BigDecimal.ZERO;
+                    } else {
+                        quantidadeRestante = quantidadeRestante.subtract(quantidadeItem);
+                        estoqueItem.setQuantidadeDisponivel(BigDecimal.ZERO);
+                    }
+                    
+                    estoqueRepository.save(estoqueItem);
+                }
+            }
+
+            // Finalizar montagem da cesta
+            cesta.setStatus("Montada");
+            cestaBasicaService.salvarCesta(cesta);
+
+            return ResponseEntity.ok(Map.of(
+                "success", true,
+                "message", "Cesta montada com sucesso baseada na pré-definição: " + preDefinicao.getNome(),
+                "cesta", cesta
+            ));
+
         } catch (Exception e) {
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+            return ResponseEntity.ok(Map.of(
+                "success", false,
+                "message", "Erro ao montar cesta: " + e.getMessage()
+            ));
         }
     }
 
-    @PutMapping("/{cestaId}/finalizar")
-    @Operation(summary = "Finalizar montagem da cesta básica")
-    public ResponseEntity<CestaBasica> finalizarMontagem(@PathVariable UUID cestaId) {
+    @GetMapping("/verificar-estoque/{preDefinicaoId}")
+    @Operation(summary = "Verificar se há estoque suficiente para uma pré-definição")
+    public ResponseEntity<Map<String, Object>> verificarEstoque(@PathVariable UUID preDefinicaoId) {
         try {
-            CestaBasica cesta = cestaBasicaService.finalizarMontagem(cestaId);
-            return ResponseEntity.ok(cesta);
-        } catch (RuntimeException e) {
-            return ResponseEntity.notFound().build();
+            PreDefinicaoCesta preDefinicao = preDefinicaoRepository.findByIdWithItens(preDefinicaoId);
+            if (preDefinicao == null) {
+                return ResponseEntity.ok(Map.of(
+                    "success", false,
+                    "message", "Pré-definição não encontrada"
+                ));
+            }
+
+            boolean estoqueOk = true;
+            StringBuilder detalhes = new StringBuilder();
+
+            for (ItemPreDefinicao item : preDefinicao.getItens()) {
+                BigDecimal quantidadeDisponivel = estoqueRepository.findQuantidadeDisponivelByTipo(item.getTipoAlimento());
+                if (quantidadeDisponivel == null) quantidadeDisponivel = BigDecimal.ZERO;
+                
+                detalhes.append(item.getTipoAlimento())
+                       .append(": Necessário ").append(item.getQuantidade())
+                       .append(", Disponível ").append(quantidadeDisponivel);
+                
+                if (quantidadeDisponivel.compareTo(item.getQuantidade()) < 0) {
+                    estoqueOk = false;
+                    detalhes.append(" ❌");
+                } else {
+                    detalhes.append(" ✅");
+                }
+                detalhes.append("\n");
+            }
+
+            return ResponseEntity.ok(Map.of(
+                "success", true,
+                "estoqueOk", estoqueOk,
+                "detalhes", detalhes.toString()
+            ));
+
         } catch (Exception e) {
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+            return ResponseEntity.ok(Map.of(
+                "success", false,
+                "message", "Erro ao verificar estoque: " + e.getMessage()
+            ));
         }
     }
 
     @DeleteMapping("/{id}")
     @Operation(summary = "Excluir cesta básica")
-    public ResponseEntity<Void> excluirCesta(@PathVariable UUID id) {
+    public ResponseEntity<Map<String, Object>> excluirCesta(@PathVariable UUID id) {
         try {
             cestaBasicaService.excluirCesta(id);
-            return ResponseEntity.noContent().build();
+            return ResponseEntity.ok(Map.of(
+                "success", true,
+                "message", "Cesta excluída com sucesso"
+            ));
         } catch (RuntimeException e) {
-            return ResponseEntity.notFound().build();
+            return ResponseEntity.ok(Map.of(
+                "success", false,
+                "message", "Cesta não encontrada"
+            ));
         } catch (Exception e) {
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+            return ResponseEntity.ok(Map.of(
+                "success", false,
+                "message", "Erro ao excluir cesta: " + e.getMessage()
+            ));
         }
     }
 
-    @GetMapping("/estatisticas/{status}")
-    @Operation(summary = "Contar cestas básicas por status")
-    public ResponseEntity<Map<String, Long>> contarPorStatus(@PathVariable String status) {
+    @GetMapping("/estatisticas")
+    @Operation(summary = "Obter estatísticas das cestas básicas")
+    public ResponseEntity<Map<String, Object>> obterEstatisticas() {
         try {
-            Long count = cestaBasicaService.contarPorStatus(status);
-            return ResponseEntity.ok(Map.of("count", count));
+            long totalCestas = cestaBasicaService.contarTodasCestas();
+            long cestasMontadas = cestaBasicaService.contarPorStatus("Montada");
+            long cestasEmMontagem = cestaBasicaService.contarPorStatus("Em Montagem");
+            
+            return ResponseEntity.ok(Map.of(
+                "totalCestas", totalCestas,
+                "cestasMontadas", cestasMontadas,
+                "cestasEmMontagem", cestasEmMontagem
+            ));
         } catch (Exception e) {
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
         }
