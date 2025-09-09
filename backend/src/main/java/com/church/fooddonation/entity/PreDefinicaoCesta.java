@@ -1,5 +1,6 @@
 package com.church.fooddonation.entity;
 
+import com.fasterxml.jackson.annotation.JsonManagedReference;
 import jakarta.persistence.*;
 import jakarta.validation.constraints.NotBlank;
 import java.util.ArrayList;
@@ -25,6 +26,7 @@ public class PreDefinicaoCesta {
     private Boolean ativa = true;
 
     @OneToMany(mappedBy = "preDefinicaoCesta", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
+    @JsonManagedReference
     private List<ItemPreDefinicao> itens = new ArrayList<>();
 
     // Constructors

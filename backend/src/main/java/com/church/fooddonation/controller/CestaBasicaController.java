@@ -237,6 +237,93 @@ public class CestaBasicaController {
         }
     }
 
+    @PostMapping("/criar-com-modelo")
+    @Operation(summary = "Criar cesta básica usando modelo pré-definido")
+    public ResponseEntity<Map<String, Object>> criarCestaComModelo(@RequestBody Map<String, String> request) {
+        try {
+            String nomeCesta = request.get("nomeCesta");
+            String preDefinicaoIdStr = request.get("preDefinicaoId");
+            
+            if (nomeCesta == null || nomeCesta.trim().isEmpty()) {
+                return ResponseEntity.badRequest().body(Map.of(
+                    "success", false,
+                    "message", "Nome da cesta é obrigatório"
+                ));
+            }
+
+            if (preDefinicaoIdStr == null || preDefinicaoIdStr.trim().isEmpty()) {
+                return ResponseEntity.badRequest().body(Map.of(
+                    "success", false,
+                    "message", "ID da pré-definição é obrigatório"
+                ));
+            }
+
+            UUID preDefinicaoId = UUID.fromString(preDefinicaoIdStr);
+            PreDefinicaoCesta preDefinicao = preDefinicaoRepository.findByIdWithItens(preDefinicaoId);
+            
+            if (preDefinicao == null) {
+                return ResponseEntity.badRequest().body(Map.of(
+                    "success", false,
+                    "message", "Modelo de cesta não encontrado"
+                ));
+            }
+
+            // Verificar se há estoque suficiente
+            for (ItemPreDefinicao item : preDefinicao.getItens()) {
+                BigDecimal quantidadeDisponivel = estoqueRepository.findQuantidadeDisponivelByTipo(item.getTipoAlimento());
+                if (quantidadeDisponivel == null || quantidadeDisponivel.compareTo(item.getQuantidade()) < 0) {
+                    return ResponseEntity.badRequest().body(Map.of(
+                        "success", false,
+                        "message", "Estoque insuficiente para " + item.getTipoAlimento() + 
+                                  ". Disponível: " + (quantidadeDisponivel != null ? quantidadeDisponivel : "0") + 
+                                  ", Necessário: " + item.getQuantidade()
+                    ));
+                }
+            }
+
+            // Criar cesta
+            CestaBasica cesta = cestaBasicaService.criarCestaComPreDefinicao(nomeCesta, preDefinicao);
+
+            // Abater estoque
+            for (ItemPreDefinicao item : preDefinicao.getItens()) {
+                List<AlimentoEstoque> itensDisponiveis = estoqueRepository
+                    .findByTipoAlimentoAndQuantidadeDisponivelGreaterThan(item.getTipoAlimento(), BigDecimal.ZERO);
+                
+                BigDecimal quantidadeRestante = item.getQuantidade();
+                for (AlimentoEstoque estoqueItem : itensDisponiveis) {
+                    if (quantidadeRestante.compareTo(BigDecimal.ZERO) <= 0) break;
+                    
+                    BigDecimal quantidadeAAbater = quantidadeRestante.min(estoqueItem.getQuantidadeDisponivel());
+                    estoqueItem.setQuantidadeDisponivel(estoqueItem.getQuantidadeDisponivel().subtract(quantidadeAAbater));
+                    estoqueRepository.save(estoqueItem);
+                    
+                    quantidadeRestante = quantidadeRestante.subtract(quantidadeAAbater);
+                }
+            }
+
+            return ResponseEntity.ok(Map.of(
+                "success", true,
+                "message", "Cesta criada com sucesso usando o modelo " + preDefinicao.getNome(),
+                "nomeCesta", cesta.getNomeCesta(),
+                "preDefinicao", Map.of(
+                    "nome", preDefinicao.getNome(),
+                    "descricao", preDefinicao.getDescricao()
+                )
+            ));
+
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of(
+                "success", false,
+                "message", "ID da pré-definição inválido"
+            ));
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Map.of(
+                "success", false,
+                "message", "Erro ao criar cesta: " + e.getMessage()
+            ));
+        }
+    }
+
     @GetMapping("/estatisticas")
     @Operation(summary = "Obter estatísticas das cestas básicas")
     public ResponseEntity<Map<String, Object>> obterEstatisticas() {

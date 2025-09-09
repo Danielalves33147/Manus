@@ -1,5 +1,6 @@
 package com.church.fooddonation.entity;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import jakarta.persistence.*;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
@@ -27,6 +28,11 @@ public class CestaBasica {
     @NotBlank(message = "Status é obrigatório")
     @Column(nullable = false, length = 50)
     private String status;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "pre_definicao_id")
+    @JsonIgnoreProperties({"itens"})
+    private PreDefinicaoCesta preDefinicao;
 
     @OneToMany(mappedBy = "cestaBasica", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
     private List<CestaBasicaItem> itens = new ArrayList<>();
@@ -71,6 +77,14 @@ public class CestaBasica {
 
     public void setStatus(String status) {
         this.status = status;
+    }
+
+    public PreDefinicaoCesta getPreDefinicao() {
+        return preDefinicao;
+    }
+
+    public void setPreDefinicao(PreDefinicaoCesta preDefinicao) {
+        this.preDefinicao = preDefinicao;
     }
 
     public List<CestaBasicaItem> getItens() {

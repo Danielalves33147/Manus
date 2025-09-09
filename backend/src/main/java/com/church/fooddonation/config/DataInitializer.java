@@ -178,7 +178,7 @@ public class DataInitializer implements CommandLineRunner {
             {"Açúcar", "2", "kg"},
             {"Macarrão", "2", "kg"},
             {"Farinha de Trigo", "1", "kg"},
-            {"Café", "500", "g"}
+            {"Café", "0.5", "kg"}  // 500g = 0.5kg
         };
 
         for (String[] item : itensFamiliar) {
@@ -202,10 +202,10 @@ public class DataInitializer implements CommandLineRunner {
         String[][] itensIndividual = {
             {"Arroz", "2", "kg"},
             {"Feijão", "1", "kg"},
-            {"Óleo", "500", "ml"},
+            {"Óleo", "0.5", "litro"},  // 500ml = 0.5 litro
             {"Açúcar", "1", "kg"},
             {"Macarrão", "1", "kg"},
-            {"Café", "250", "g"}
+            {"Café", "0.25", "kg"}     // 250g = 0.25kg
         };
 
         for (String[] item : itensIndividual) {
@@ -228,10 +228,10 @@ public class DataInitializer implements CommandLineRunner {
         // Itens da cesta de emergência
         String[][] itensEmergencia = {
             {"Arroz", "1", "kg"},
-            {"Feijão", "500", "g"},
-            {"Óleo", "250", "ml"},
-            {"Açúcar", "500", "g"},
-            {"Macarrão", "500", "g"}
+            {"Feijão", "0.5", "kg"},    // 500g = 0.5kg
+            {"Óleo", "0.25", "litro"},  // 250ml = 0.25 litro
+            {"Açúcar", "0.5", "kg"},    // 500g = 0.5kg
+            {"Macarrão", "0.5", "kg"}   // 500g = 0.5kg
         };
 
         for (String[] item : itensEmergencia) {

@@ -1,5 +1,6 @@
 package com.church.fooddonation.entity;
 
+import com.fasterxml.jackson.annotation.JsonBackReference;
 import jakarta.persistence.*;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
@@ -18,6 +19,7 @@ public class ItemPreDefinicao {
     @NotNull(message = "Pré-definição é obrigatória")
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "pre_definicao_id", nullable = false)
+    @JsonBackReference
     private PreDefinicaoCesta preDefinicaoCesta;
 
     @NotBlank(message = "Tipo de alimento é obrigatório")

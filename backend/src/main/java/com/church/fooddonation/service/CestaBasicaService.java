@@ -3,6 +3,7 @@ package com.church.fooddonation.service;
 import com.church.fooddonation.entity.CestaBasica;
 import com.church.fooddonation.entity.CestaBasicaItem;
 import com.church.fooddonation.entity.AlimentoEstoque;
+import com.church.fooddonation.entity.PreDefinicaoCesta;
 import com.church.fooddonation.repository.CestaBasicaRepository;
 import com.church.fooddonation.repository.AlimentoEstoqueRepository;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -45,6 +46,15 @@ public class CestaBasicaService {
         cesta.setNomeCesta(nomeCesta);
         cesta.setDataMontagem(LocalDate.now());
         cesta.setStatus("Em Montagem");
+        return cestaBasicaRepository.save(cesta);
+    }
+
+    public CestaBasica criarCestaComPreDefinicao(String nomeCesta, PreDefinicaoCesta preDefinicao) {
+        CestaBasica cesta = new CestaBasica();
+        cesta.setNomeCesta(nomeCesta);
+        cesta.setDataMontagem(LocalDate.now());
+        cesta.setStatus("Montada"); // Já montada com base no modelo
+        cesta.setPreDefinicao(preDefinicao);
         return cestaBasicaRepository.save(cesta);
     }
 

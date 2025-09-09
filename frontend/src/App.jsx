@@ -7,7 +7,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs.j
 import { Badge } from '@/components/ui/badge.jsx'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select.jsx'
 import { Textarea } from '@/components/ui/textarea.jsx'
-import { Heart, Package, Users, ShoppingCart, UserPlus, Trash2, Edit, AlertCircle, Bell } from 'lucide-react'
+import { Heart, Package, Users, ShoppingCart, UserPlus, Trash2, Edit, AlertCircle, Bell, Settings } from 'lucide-react'
 import './App.css'
 
 function App() {
@@ -21,6 +21,20 @@ function App() {
   // Estados para cestas básicas
   const [cestas, setCestas] = useState([])
   const [novaCesta, setNovaCesta] = useState('')
+  const [modeloSelecionado, setModeloSelecionado] = useState('')
+  
+  // Estados para modelos de cestas
+  const [modelos, setModelos] = useState([])
+  const [novoModelo, setNovoModelo] = useState({
+    nome: '',
+    descricao: '',
+    itens: []
+  })
+  const [itemModelo, setItemModelo] = useState({
+    tipoAlimento: '',
+    quantidade: '',
+    unidadeMedida: 'kg'
+  })
   
   // Estados para beneficiados
   const [beneficiados, setBeneficiados] = useState([])
@@ -108,6 +122,7 @@ function App() {
     try {
       await Promise.all([
         carregarCestas(),
+        carregarModelos(),
         carregarBeneficiados(),
         carregarDoacoes(),
         carregarEstatisticas(),
@@ -178,20 +193,30 @@ function App() {
       setError('Nome da cesta é obrigatório')
       return
     }
+
+    if (!modeloSelecionado) {
+      setError('Selecione um modelo de cesta')
+      return
+    }
     
     setLoading(true)
     try {
-      const response = await fetchAPI(`${API_BASE}/cestas-basicas`, {
+      const response = await fetchAPI(`${API_BASE}/cestas-basicas/criar-com-modelo`, {
         method: 'POST',
-        body: JSON.stringify({ nomeCesta: novaCesta }),
+        body: JSON.stringify({ 
+          nomeCesta: novaCesta,
+          preDefinicaoId: modeloSelecionado
+        }),
       })
       
       if (response.ok) {
         const cesta = await response.json()
         setCestas([...cestas, cesta])
         setNovaCesta('')
+        setModeloSelecionado('')
         setError('')
         await carregarEstatisticas()
+        await carregarAlertas() // Atualizar alertas após criar cesta
       } else {
         const errorText = await response.text()
         setError('Erro ao criar cesta: ' + errorText)
@@ -214,6 +239,86 @@ function App() {
     } catch (error) {
       console.error('Erro ao carregar cestas:', error)
     }
+  }
+
+  // Funções para modelos de cestas
+  const carregarModelos = async () => {
+    try {
+      const response = await fetchAPI(`${API_BASE}/pre-definicoes`)
+      
+      if (response.ok) {
+        const data = await response.json()
+        setModelos(Array.isArray(data) ? data : [])
+      }
+    } catch (error) {
+      console.error('Erro ao carregar modelos:', error)
+    }
+  }
+
+  const criarModelo = async () => {
+    if (!novoModelo.nome || novoModelo.itens.length === 0) {
+      setError('Nome do modelo e pelo menos um item são obrigatórios')
+      return
+    }
+    
+    setLoading(true)
+    try {
+      const response = await fetchAPI(`${API_BASE}/pre-definicoes`, {
+        method: 'POST',
+        body: JSON.stringify(novoModelo),
+      })
+      
+      if (response.ok) {
+        const modelo = await response.json()
+        setModelos([...modelos, modelo])
+        setNovoModelo({
+          nome: '',
+          descricao: '',
+          itens: []
+        })
+        setError('')
+      } else {
+        const errorText = await response.text()
+        setError('Erro ao criar modelo: ' + errorText)
+      }
+    } catch (error) {
+      setError('Erro ao criar modelo: ' + error.message)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const adicionarItemModelo = () => {
+    if (!itemModelo.tipoAlimento || !itemModelo.quantidade) {
+      setError('Tipo de alimento e quantidade são obrigatórios')
+      return
+    }
+
+    const novoItem = {
+      tipoAlimento: itemModelo.tipoAlimento,
+      quantidade: parseFloat(itemModelo.quantidade),
+      unidadeMedida: itemModelo.unidadeMedida
+    }
+
+    setNovoModelo({
+      ...novoModelo,
+      itens: [...novoModelo.itens, novoItem]
+    })
+
+    setItemModelo({
+      tipoAlimento: '',
+      quantidade: '',
+      unidadeMedida: 'kg'
+    })
+    setError('')
+  }
+
+  const removerItemModelo = (index) => {
+    const novosItens = novoModelo.itens.filter((_, i) => i !== index)
+    setNovoModelo({
+      ...novoModelo,
+      itens: novosItens
+    })
   }
 
   // Funções para beneficiados
@@ -553,10 +658,14 @@ function App() {
         )}
 
         <Tabs defaultValue="cestas" className="space-y-6">
-          <TabsList className="grid w-full grid-cols-6 lg:grid-cols-7">
+          <TabsList className="grid w-full grid-cols-7 lg:grid-cols-8">
             <TabsTrigger value="cestas" className="flex items-center space-x-2">
               <Package className="w-4 h-4" />
               <span>Cestas Básicas</span>
+            </TabsTrigger>
+            <TabsTrigger value="modelos" className="flex items-center space-x-2">
+              <Settings className="w-4 h-4" />
+              <span>Modelos</span>
             </TabsTrigger>
             <TabsTrigger value="beneficiados" className="flex items-center space-x-2">
               <Users className="w-4 h-4" />
@@ -592,17 +701,38 @@ function App() {
             <Card>
               <CardHeader>
                 <CardTitle>Gerenciar Cestas Básicas</CardTitle>
-                <CardDescription>Crie e gerencie cestas básicas para distribuição</CardDescription>
+                <CardDescription>Crie cestas básicas a partir de modelos pré-definidos</CardDescription>
               </CardHeader>
               <CardContent className="space-y-6">
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div>
+                    <Label htmlFor="nome-cesta">Nome da Cesta *</Label>
+                    <Input
+                      id="nome-cesta"
+                      placeholder="Ex: Cesta Família Silva"
+                      value={novaCesta}
+                      onChange={(e) => setNovaCesta(e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="modelo-cesta">Modelo da Cesta *</Label>
+                    <Select value={modeloSelecionado} onValueChange={setModeloSelecionado}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Selecione um modelo" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {modelos.map((modelo) => (
+                          <SelectItem key={modelo.id} value={modelo.id}>
+                            {modelo.nome} - {modelo.itens?.length || 0} itens
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+                
                 <div className="flex space-x-4">
-                  <Input
-                    placeholder="Nome da nova cesta básica"
-                    value={novaCesta}
-                    onChange={(e) => setNovaCesta(e.target.value)}
-                    className="flex-1"
-                  />
-                  <Button onClick={criarCesta} disabled={loading}>
+                  <Button onClick={criarCesta} disabled={loading || !novaCesta || !modeloSelecionado}>
                     {loading ? 'Criando...' : 'Criar Cesta'}
                   </Button>
                   <Button variant="outline" onClick={carregarCestas}>
@@ -624,6 +754,140 @@ function App() {
                           <h3 className="font-medium">{cesta.nomeCesta || cesta.nome || `Cesta ${index + 1}`}</h3>
                           <p className="text-sm text-gray-500">Status: {cesta.status || 'Ativa'}</p>
                           <p className="text-sm text-gray-500">Data: {cesta.dataMontagem || new Date().toLocaleDateString()}</p>
+                          {cesta.preDefinicao && (
+                            <p className="text-sm text-blue-600">Modelo: {cesta.preDefinicao.nome}</p>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          {/* Aba Modelos de Cestas */}
+          <TabsContent value="modelos">
+            <Card>
+              <CardHeader>
+                <CardTitle>Gerenciar Modelos de Cestas</CardTitle>
+                <CardDescription>Crie e gerencie modelos pré-definidos para cestas básicas</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div>
+                    <Label htmlFor="nome-modelo">Nome do Modelo *</Label>
+                    <Input
+                      id="nome-modelo"
+                      placeholder="Ex: Cesta Familiar"
+                      value={novoModelo.nome}
+                      onChange={(e) => setNovoModelo({...novoModelo, nome: e.target.value})}
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="descricao-modelo">Descrição</Label>
+                    <Input
+                      id="descricao-modelo"
+                      placeholder="Ex: Cesta para família de 4 pessoas"
+                      value={novoModelo.descricao}
+                      onChange={(e) => setNovoModelo({...novoModelo, descricao: e.target.value})}
+                    />
+                  </div>
+                </div>
+
+                {/* Adicionar itens ao modelo */}
+                <div className="border rounded-lg p-4 space-y-4">
+                  <h4 className="font-medium">Adicionar Itens ao Modelo</h4>
+                  <div className="grid gap-4 md:grid-cols-4">
+                    <div>
+                      <Label htmlFor="tipo-alimento">Tipo de Alimento *</Label>
+                      <Input
+                        id="tipo-alimento"
+                        placeholder="Ex: Arroz"
+                        value={itemModelo.tipoAlimento}
+                        onChange={(e) => setItemModelo({...itemModelo, tipoAlimento: e.target.value})}
+                      />
+                    </div>
+                    <div>
+                      <Label htmlFor="quantidade">Quantidade *</Label>
+                      <Input
+                        id="quantidade"
+                        type="number"
+                        step="0.1"
+                        placeholder="Ex: 5"
+                        value={itemModelo.quantidade}
+                        onChange={(e) => setItemModelo({...itemModelo, quantidade: e.target.value})}
+                      />
+                    </div>
+                    <div>
+                      <Label htmlFor="unidade">Unidade</Label>
+                      <Select value={itemModelo.unidadeMedida} onValueChange={(value) => setItemModelo({...itemModelo, unidadeMedida: value})}>
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="kg">kg</SelectItem>
+                          <SelectItem value="litro">litro</SelectItem>
+                          <SelectItem value="unidade">unidade</SelectItem>
+                          <SelectItem value="pacote">pacote</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="flex items-end">
+                      <Button onClick={adicionarItemModelo} disabled={!itemModelo.tipoAlimento || !itemModelo.quantidade}>
+                        Adicionar
+                      </Button>
+                    </div>
+                  </div>
+
+                  {/* Lista de itens do modelo */}
+                  {novoModelo.itens.length > 0 && (
+                    <div className="space-y-2">
+                      <h5 className="font-medium text-sm">Itens do Modelo:</h5>
+                      {novoModelo.itens.map((item, index) => (
+                        <div key={index} className="flex justify-between items-center p-2 bg-gray-50 rounded">
+                          <span>{item.tipoAlimento} - {item.quantidade} {item.unidadeMedida}</span>
+                          <Button variant="ghost" size="sm" onClick={() => removerItemModelo(index)}>
+                            <Trash2 className="w-4 h-4" />
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex space-x-4">
+                  <Button onClick={criarModelo} disabled={loading || !novoModelo.nome || novoModelo.itens.length === 0}>
+                    {loading ? 'Criando...' : 'Criar Modelo'}
+                  </Button>
+                  <Button variant="outline" onClick={carregarModelos}>
+                    Atualizar Lista
+                  </Button>
+                </div>
+
+                {/* Lista de modelos existentes */}
+                <div className="border rounded-lg p-6">
+                  {modelos.length === 0 ? (
+                    <div className="text-center py-8">
+                      <Settings className="w-12 h-12 text-gray-400 mx-auto mb-4" />
+                      <p className="text-gray-500">Nenhum modelo encontrado.</p>
+                      <p className="text-gray-400 text-sm">Crie um novo modelo para começar.</p>
+                    </div>
+                  ) : (
+                    <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                      {modelos.map((modelo) => (
+                        <div key={modelo.id} className="border rounded-lg p-4">
+                          <h3 className="font-medium">{modelo.nome}</h3>
+                          <p className="text-sm text-gray-500">{modelo.descricao}</p>
+                          <p className="text-sm text-blue-600">{modelo.itens?.length || 0} itens</p>
+                          {modelo.itens && modelo.itens.length > 0 && (
+                            <div className="mt-2 text-xs text-gray-500">
+                              {modelo.itens.slice(0, 3).map((item, idx) => (
+                                <div key={idx}>{item.tipoAlimento} ({item.quantidade} {item.unidadeMedida})</div>
+                              ))}
+                              {modelo.itens.length > 3 && <div>... e mais {modelo.itens.length - 3} itens</div>}
+                            </div>
+                          )}
                         </div>
                       ))}
                     </div>
